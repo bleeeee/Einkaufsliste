@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JGA Einkaufsliste</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a18; min-height: 100vh; }
+
+  .header { background: #fff; border-bottom: 1px solid #e5e5e0; padding: 16px 20px; position: sticky; top: 0; z-index: 10; }
+  .header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .header-title { font-size: 18px; font-weight: 600; }
+  .header-sub { font-size: 13px; color: #888; }
+  .sync-badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; background: #e1f5ee; color: #0f6e56; font-weight: 500; }
+  .sync-badge.syncing { background: #faeeda; color: #633806; }
+
+  .progress-wrap { margin-top: 8px; }
+  .progress-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+  .progress-track { background: #ececea; border-radius: 4px; height: 5px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #1d9e75; border-radius: 4px; transition: width 0.4s; }
+
+  .filter-bar { background: #fff; border-bottom: 1px solid #e5e5e0; padding: 10px 20px; display: flex; gap: 8px; overflow-x: auto; }
+  .filter-bar::-webkit-scrollbar { display: none; }
+  .fbtn { font-size: 12px; padding: 5px 14px; border-radius: 20px; border: 1px solid #ddd; background: transparent; color: #666; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .fbtn.active { background: #1a1a18; color: #fff; border-color: #1a1a18; }
+
+  .list { padding: 12px 0 60px; }
+  .section-label { font-size: 11px; font-weight: 600; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; padding: 16px 20px 6px; }
+  .item { display: flex; align-items: center; gap: 14px; padding: 12px 20px; background: #fff; border-bottom: 1px solid #f0f0ee; cursor: pointer; transition: background 0.1s; }
+  .item:active { background: #f8f8f6; }
+  .item.checked { background: #fafafa; }
+  .check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #ccc; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .item.checked .check { background: #1d9e75; border-color: #1d9e75; }
+  .check-mark { display: none; width: 10px; height: 7px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translateY(-1px); }
+  .item.checked .check-mark { display: block; }
+  .item-info { flex: 1; }
+  .item-name { font-size: 15px; color: #1a1a18; transition: color 0.15s; }
+  .item.checked .item-name { text-decoration: line-through; color: #bbb; }
+  .item-note { font-size: 11px; color: #f59e0b; margin-top: 2px; }
+  .item-qty { font-size: 13px; color: #999; text-align: right; min-width: 100px; }
+  .item.checked .item-qty { color: #ccc; }
+
+  .reset-btn { position: fixed; bottom: 20px; right: 20px; background: #fff; border: 1px solid #e0e0dc; border-radius: 20px; padding: 8px 16px; font-size: 13px; color: #999; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .reset-btn:active { background: #f5f5f3; }
+
+  @media (min-width: 600px) {
+    body { max-width: 480px; margin: 0 auto; }
+    body::before { content: ''; display: block; position: fixed; inset: 0; background: #ebebea; z-index: -1; }
+    .header, .filter-bar { max-width: 480px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div>
+      <div class="header-title">🛒 JGA Einkaufsliste</div>
+      <div class="header-sub">7 Männer · 2 Tage</div>
+    </div>
+    <div class="sync-badge" id="sync-badge">Live</div>
+  </div>
+  <div class="progress-wrap">
+    <div class="progress-label" id="progress-label">0 von 0 erledigt</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  </div>
+</div>
+
+<div class="filter-bar" id="filter-bar"></div>
+<div class="list" id="list"></div>
+<button class="reset-btn" onclick="resetAll()">Alles zurücksetzen</button>
+
+<script>
+const STORAGE_KEY = 'jga_einkaufsliste_v1';
+
+const items = [
+  // === OBST & GEMÜSE ===
+  { id:'f1', name:'Kirschtomaten', qty:'600 g', cat:'salat', aisle:'Obst & Gemüse', note:'' },
+  { id:'f2', name:'Rucola', qty:'200 g', cat:'salat', aisle:'Obst & Gemüse', note:'' },
+  { id:'f3', name:'Paprika (für Spieße)', qty:'3 Stück', cat:'grill', aisle:'Obst & Gemüse', note:'' },
+  { id:'f4', name:'Zucchini (für Spieße)', qty:'1 Stück', cat:'grill', aisle:'Obst & Gemüse', note:'' },
+  { id:'f5', name:'Zwiebeln (für Spieße)', qty:'2 Stück', cat:'grill', aisle:'Obst & Gemüse', note:'' },
+  { id:'f6', name:'Rote Zwiebeln (Salat)', qty:'1 Stück', cat:'salat', aisle:'Obst & Gemüse', note:'' },
+  { id:'f7', name:'Möhren, Paprika, Gurke (Proviant)', qty:'je 1 Stück', cat:'cold', aisle:'Obst & Gemüse', note:'' },
+  { id:'f8', name:'Bananen', qty:'1 Bund', cat:'cold', aisle:'Obst & Gemüse', note:'' },
+  { id:'f9', name:'Weintrauben', qty:'1 kg', cat:'cold', aisle:'Obst & Gemüse', note:'' },
+  { id:'f10', name:'Äpfel', qty:'1 kg', cat:'cold', aisle:'Obst & Gemüse', note:'' },
+  { id:'f11', name:'Maiskolben', qty:'4 Stück', cat:'grill', aisle:'Obst & Gemüse', note:'' },
+
+  // === FLEISCH & KÄSE ===
+  { id:'m1', name:'Steaks (Ribeye oder Nacken)', qty:'1,5 kg', cat:'grill', aisle:'Fleisch & Käse', note:'' },
+  { id:'m2', name:'Hähnchenbrust für Spieße', qty:'800 g', cat:'grill', aisle:'Fleisch & Käse', note:'' },
+  { id:'m3', name:'Grillkäse (Halloumi o.ä.)', qty:'400 g', cat:'grill', aisle:'Fleisch & Käse', note:'' },
+  { id:'m4', name:'Feta', qty:'400 g', cat:'salat', aisle:'Fleisch & Käse', note:'' },
+  { id:'m5', name:'Aufschnitt (Salami, Schinken)', qty:'400 g', cat:'cold', aisle:'Fleisch & Käse', note:'' },
+  { id:'m6', name:'Salami am Stück (Proviant)', qty:'150 g', cat:'cold', aisle:'Fleisch & Käse', note:'' },
+  { id:'m7', name:'Käse (Gouda, Emmentaler)', qty:'300 g', cat:'cold', aisle:'Fleisch & Käse', note:'' },
+  { id:'m8', name:'Scheibenkäse', qty:'200 g', cat:'cold', aisle:'Fleisch & Käse', note:'' },
+  { id:'m9', name:'Butter', qty:'250 g', cat:'cold', aisle:'Fleisch & Käse', note:'' },
+  { id:'m10', name:'Kräuterbutter', qty:'2 Rollen', cat:'grill', aisle:'Fleisch & Käse', note:'' },
+
+  // === KÜHLREGAL ===
+  { id:'k1', name:'Milch', qty:'2 l', cat:'fruehstueck', aisle:'Kühlregal', note:'' },
+  { id:'k2', name:'Joghurt', qty:'500 g', cat:'fruehstueck', aisle:'Kühlregal', note:'' },
+  { id:'k3', name:'Aioli / Knoblauchsauce', qty:'1 Becher', cat:'grill', aisle:'Kühlregal', note:'' },
+
+  // === BROT & BACKWAREN ===
+  { id:'b1', name:'Brötchen (Mittag Tag 1)', qty:'16 Stück', cat:'cold', aisle:'Brot & Backwaren', note:'' },
+  { id:'b2', name:'Baguette & Fladenbrot (Grill)', qty:'3 Stück', cat:'grill', aisle:'Brot & Backwaren', note:'' },
+  { id:'b3', name:'Croissants & Brezeln (Frühstück)', qty:'14 Stück', cat:'fruehstueck', aisle:'Brot & Backwaren', note:'Am Tag des Frühstücks kaufen' },
+  { id:'b4', name:'Brötchen (Frühstück)', qty:'6 Stück', cat:'fruehstueck', aisle:'Brot & Backwaren', note:'Am Tag des Frühstücks kaufen' },
+  { id:'b5', name:'Brötchen (Mittag Tag 2)', qty:'14 Stück', cat:'cold', aisle:'Brot & Backwaren', note:'Am Tag des Frühstücks kaufen' },
+
+  // === TROCKENWAREN ===
+  { id:'t1', name:'Pinienkerne (oder Sonnenblumenkerne)', qty:'80 g', cat:'salat', aisle:'Trockenwaren', note:'' },
+  { id:'t2', name:'Müsli', qty:'500 g', cat:'fruehstueck', aisle:'Trockenwaren', note:'' },
+  { id:'t3', name:'Müsliriegel', qty:'10 Stück', cat:'fruehstueck', aisle:'Trockenwaren', note:'' },
+  { id:'t4', name:'Nachos', qty:'4 Tüten', cat:'snack', aisle:'Trockenwaren', note:'' },
+  { id:'t5', name:'Brezeln & Chips (Abend)', qty:'je 1 Tüte', cat:'snack', aisle:'Trockenwaren', note:'' },
+  { id:'t6', name:'Peanuts & Cashews', qty:'je 200 g', cat:'snack', aisle:'Trockenwaren', note:'' },
+  { id:'t7', name:'Pistazien', qty:'150 g', cat:'snack', aisle:'Trockenwaren', note:'' },
+  { id:'t8', name:'Nussmischung (Proviant)', qty:'200 g', cat:'snack', aisle:'Trockenwaren', note:'' },
+  { id:'t9', name:'Schokolade', qty:'3 Tafeln', cat:'snack', aisle:'Trockenwaren', note:'' },
+  { id:'t10', name:'Kaffeepulver', qty:'500 g', cat:'getraenke', aisle:'Trockenwaren', note:'' },
+  { id:'t11', name:'Holzspieße', qty:'1 Packung', cat:'grill', aisle:'Trockenwaren', note:'' },
+
+  // === SAUCEN & KONSERVEN ===
+  { id:'s1', name:'Olivenöl', qty:'1 Flasche', cat:'salat', aisle:'Saucen & Konserven', note:'' },
+  { id:'s2', name:'Balsamico Essig', qty:'1 Flasche', cat:'salat', aisle:'Saucen & Konserven', note:'' },
+  { id:'s3', name:'Senf', qty:'1 Glas', cat:'salat', aisle:'Saucen & Konserven', note:'' },
+  { id:'s4', name:'Honig', qty:'1 Glas', cat:'salat', aisle:'Saucen & Konserven', note:'Auch für Frühstück' },
+  { id:'s5', name:'BBQ-Sauce', qty:'1 Flasche', cat:'grill', aisle:'Saucen & Konserven', note:'' },
+  { id:'s6', name:'Ketchup', qty:'1 Flasche', cat:'grill', aisle:'Saucen & Konserven', note:'' },
+  { id:'s7', name:'Käsedip & Salsa', qty:'je 1 Glas', cat:'snack', aisle:'Saucen & Konserven', note:'' },
+  { id:'s8', name:'Marmelade', qty:'1 Glas', cat:'fruehstueck', aisle:'Saucen & Konserven', note:'' },
+  { id:'s9', name:'Grillmarinade / Gewürze', qty:'1 Flasche', cat:'grill', aisle:'Saucen & Konserven', note:'' },
+  { id:'s10', name:'Salz & Pfeffer', qty:'nach Bedarf', cat:'salat', aisle:'Saucen & Konserven', note:'' },
+
+  // === GETRÄNKE ===
+  { id:'g1', name:'Wasser still 1,5 l', qty:'2 Träger (6er)', cat:'getraenke', aisle:'Getränke', note:'' },
+  { id:'g2', name:'Wasser sprudel 1,5 l', qty:'1 Träger (6er)', cat:'getraenke', aisle:'Getränke', note:'' },
+  { id:'g3', name:'Cola & Fanta', qty:'4–6 Flaschen', cat:'getraenke', aisle:'Getränke', note:'' },
+  { id:'g4', name:'Eistee', qty:'3 Flaschen', cat:'getraenke', aisle:'Getränke', note:'' },
+  { id:'g5', name:'Weizenbier', qty:'1 Kasten', cat:'getraenke', aisle:'Getränke', note:'' },
+  { id:'g6', name:'Radler', qty:'12 Flaschen', cat:'getraenke', aisle:'Getränke', note:'' },
+
+  // === GRILLZUBEHÖR ===
+  { id:'z1', name:'Holzkohle / Briketts', qty:'5 kg', cat:'grill', aisle:'Grillzubehör', note:'' },
+  { id:'z2', name:'Grillanzünder', qty:'1 Päckchen', cat:'grill', aisle:'Grillzubehör', note:'' },
+];
+
+const aisleOrder = ['Obst & Gemüse','Fleisch & Käse','Kühlregal','Brot & Backwaren','Trockenwaren','Saucen & Konserven','Getränke','Grillzubehör'];
+const filters = [
+  { id:'alle', label:'Alle' },
+  { id:'grill', label:'Grill' },
+  { id:'salat', label:'Salat' },
+  { id:'cold', label:'Brot & Aufschnitt' },
+  { id:'fruehstueck', label:'Frühstück' },
+  { id:'snack', label:'Snacks' },
+  { id:'getraenke', label:'Getränke' },
+];
+
+let checked = {};
+let activeFilter = 'alle';
+let pollInterval = null;
+
+function getStorageKey() { return STORAGE_KEY; }
+
+async function loadFromStorage() {
+  try {
+    const r = await window.storage.get(STORAGE_KEY, true);
+    if (r && r.value) {
+      const data = JSON.parse(r.value);
+      checked = data.checked || {};
+    }
+  } catch(e) { checked = {}; }
+}
+
+async function saveToStorage() {
+  setSyncing(true);
+  try {
+    await window.storage.set(STORAGE_KEY, JSON.stringify({ checked, ts: Date.now() }), true);
+    setSyncing(false);
+  } catch(e) { setSyncing(false); }
+}
+
+function setSyncing(v) {
+  const b = document.getElementById('sync-badge');
+  if (v) { b.textContent = 'Speichern…'; b.className = 'sync-badge syncing'; }
+  else { b.textContent = 'Live'; b.className = 'sync-badge'; }
+}
+
+async function poll() {
+  try {
+    const r = await window.storage.get(STORAGE_KEY, true);
+    if (r && r.value) {
+      const data = JSON.parse(r.value);
+      if (JSON.stringify(data.checked) !== JSON.stringify(checked)) {
+        checked = data.checked || {};
+        render();
+      }
+    }
+  } catch(e) {}
+}
+
+function buildFilters() {
+  const bar = document.getElementById('filter-bar');
+  bar.innerHTML = filters.map(f =>
+    `<button class="fbtn${f.id===activeFilter?' active':''}" onclick="setFilter('${f.id}')">${f.label}</button>`
+  ).join('');
+}
+
+function setFilter(f) {
+  activeFilter = f;
+  buildFilters();
+  render();
+}
+
+function toggle(id) {
+  checked[id] = !checked[id];
+  render();
+  saveToStorage();
+}
+
+function resetAll() {
+  if (confirm('Alle Häkchen entfernen?')) {
+    checked = {};
+    render();
+    saveToStorage();
+  }
+}
+
+function render() {
+  const filtered = activeFilter === 'alle' ? items : items.filter(it => it.cat === activeFilter);
+  const unchecked = filtered.filter(it => !checked[it.id]);
+  const done = filtered.filter(it => checked[it.id]);
+  const sorted = [...unchecked, ...done];
+
+  const totalAll = items.length;
+  const totalDone = items.filter(it => checked[it.id]).length;
+  const pct = totalAll ? Math.round(totalDone / totalAll * 100) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = totalDone + ' von ' + totalAll + ' erledigt';
+
+  const ailesInView = activeFilter === 'alle'
+    ? aisleOrder
+    : [...new Set(filtered.map(it => it.aisle))];
+
+  let html = '';
+  ailesInView.forEach(aisle => {
+    const aisleItems = sorted.filter(it => it.aisle === aisle);
+    if (!aisleItems.length) return;
+    html += `<div class="section-label">${aisle}</div>`;
+    aisleItems.forEach(it => {
+      const isDone = !!checked[it.id];
+      html += `<div class="item${isDone?' checked':''}" onclick="toggle('${it.id}')">
+        <div class="check"><div class="check-mark"></div></div>
+        <div class="item-info">
+          <div class="item-name">${it.name}</div>
+          ${it.note ? `<div class="item-note">⏰ ${it.note}</div>` : ''}
+        </div>
+        <div class="item-qty">${it.qty}</div>
+      </div>`;
+    });
+  });
+  document.getElementById('list').innerHTML = html;
+}
+
+async function init() {
+  buildFilters();
+  await loadFromStorage();
+  render();
+  pollInterval = setInterval(poll, 5000);
+}
+
+init();
+</script>
+</body>
+</html>
